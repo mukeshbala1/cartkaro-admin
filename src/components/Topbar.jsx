@@ -4,7 +4,7 @@ import { Menu, ChevronDown, LogOut, UserCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Topbar({ title, subtitle, onMenuClick }) {
-  const { adminName, logout } = useAuth();
+  const { adminName, role, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -48,7 +48,7 @@ export default function Topbar({ title, subtitle, onMenuClick }) {
             <span className="text-sm font-semibold text-navy-900">
               {adminName || 'Admin'}
             </span>
-            <span className="text-[11px] text-ink-500">Super Admin</span>
+            <span className="text-[11px] text-ink-500">{role || 'Admin'}</span>
           </span>
           <ChevronDown size={16} className="hidden sm:block text-ink-400" />
         </button>

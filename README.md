@@ -15,22 +15,11 @@ npm run dev
 
 The app runs at `http://localhost:5173`.
 
-### Login
+### Admin login
 
-The admin login currently checks against a fixed username/password (not Firebase Auth yet), so you can log in immediately:
+This panel uses Firebase Authentication with email/password login. It has no public registration page: only accounts with the Firebase custom claim `admin: true` can enter. A `superAdmin: true` user can create further admin accounts from **Settings → Admin access**.
 
-| Username     | Password         |
-|--------------|------------------|
-| `MSS@2005`   | `Cartkaro@132807`|
-
-These live in `src/firebase/authConfig.js`. You can change them there, or override via `.env`:
-
-```
-VITE_ADMIN_USERNAME=youradmin
-VITE_ADMIN_PASSWORD=yourpassword
-```
-
-> To switch to real Firebase Authentication later, replace the credential check inside `login()` in `src/context/AuthContext.jsx` with `signInWithEmailAndPassword` from `firebase/auth`, and check the user's role against the `admins` collection (`role == "admin"`).
+Do not put passwords in `.env`: all `VITE_` values are included in the browser build.
 
 ---
 
@@ -51,6 +40,29 @@ The app will automatically detect the config and start reading/writing real data
 - **`admins`** — admin users (`email`, `role`), for when you switch on Firebase Authentication
 
 Firebase Storage paths expected by the registration apps: `profileImages/`, `businessImages/`, `documents/`, `bankDocuments/`. This admin panel only **reads** the resulting URLs — it doesn't upload files.
+
+### Admin setup and deployment
+
+1. In Firebase Console → Authentication → Sign-in method, enable **Email/Password**.
+2. Create the first user in Firebase Console → Authentication → Users.
+3. Firebase Console → Project settings → Service accounts → Generate new private key. Keep this JSON file outside the repository. Grant the first user both `admin: true` and `superAdmin: true` using the included trusted local script (replace the placeholders with your actual path and email):
+
+```bash
+npm --prefix functions install
+node functions/scripts/grant-super-admin.mjs /absolute/path/to/service-account.json admin@yourcompany.com
+```
+
+This must never be done from browser code.
+4. Install and deploy the included Cloud Function, which lets only that Super Admin create normal admin accounts:
+
+```bash
+npm install -g firebase-tools
+firebase login
+firebase use your-project-id
+firebase deploy --only functions,firestore:rules,storage
+```
+
+After a claim is granted, the user must sign out and sign in again. The included `firestore.rules` and `storage.rules` deny database and document access to anyone who is not an authenticated Firebase admin.
 
 ---
 
@@ -95,6 +107,12 @@ npm run build
 ```
 
 Output goes to `dist/`. Deploy it to Firebase Hosting, Vercel, Netlify, or any static host.
+
+For Firebase Hosting, deploy the SPA and its rewrite rule using:
+
+```bash
+firebase deploy --only hosting
+```
 
 ```bash
 npm run preview   # preview the production build locally

@@ -1,48 +1,105 @@
 // src/context/AuthContext.jsx
 import { createContext, useContext, useState, useEffect } from 'react';
-import { ADMIN_USERNAME, ADMIN_PASSWORD } from '../firebase/authConfig';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
+import { auth, isFirebaseConfigured } from '../firebase/firebaseConfig';
 
 const AuthContext = createContext(null);
-const SESSION_KEY = 'cartkaro_admin_session';
+
+function readableAuthError(error) {
+  if (error?.code === 'auth/invalid-credential' || error?.code === 'auth/wrong-password') {
+    return 'Incorrect email address or password.';
+  }
+  if (error?.code === 'auth/user-not-found') return 'No account exists for this email address.';
+  if (error?.code === 'auth/too-many-requests') return 'Too many attempts. Please try again later.';
+  if (error?.code === 'auth/network-request-failed') return 'Network error. Check your connection and try again.';
+  return 'Unable to sign in. Please try again.';
+}
 
 export function AuthProvider({ children }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminName, setAdminName] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [role, setRole] = useState('');
   const [checkingSession, setCheckingSession] = useState(true);
 
   useEffect(() => {
-    const saved = localStorage.getItem(SESSION_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setIsAuthenticated(true);
-        setAdminName(parsed.username || 'Admin');
-      } catch {
-        localStorage.removeItem(SESSION_KEY);
-      }
+    if (!isFirebaseConfigured || !auth) {
+      setCheckingSession(false);
+      return undefined;
     }
-    setCheckingSession(false);
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setIsAuthenticated(false);
+        setAdminName('');
+        setAdminEmail('');
+        setRole('');
+        setCheckingSession(false);
+        return;
+      }
+
+      try {
+        const token = await user.getIdTokenResult();
+        if (token.claims.admin === true) {
+          setIsAuthenticated(true);
+          setAdminName(user.displayName || user.email || 'Admin');
+          setAdminEmail(user.email || '');
+          setRole(token.claims.superAdmin === true ? 'Super Admin' : 'Admin');
+        } else {
+          await signOut(auth);
+        }
+      } catch {
+        setIsAuthenticated(false);
+      } finally {
+        setCheckingSession(false);
+      }
+    });
+
+    return unsubscribe;
   }, []);
 
-  function login(username, password) {
-    if (username.trim() === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ username }));
-      setIsAuthenticated(true);
-      setAdminName(username);
-      return { success: true };
+  async function login(email, password) {
+    if (!isFirebaseConfigured || !auth) {
+      return { success: false, error: 'Firebase is not configured. Add your Firebase values to .env and restart the app.' };
     }
-    return { success: false, error: 'Invalid username or password.' };
+
+    try {
+      const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const token = await credential.user.getIdTokenResult(true);
+      if (token.claims.admin !== true) {
+        await signOut(auth);
+        return { success: false, error: 'This account is not authorised to access the admin panel.' };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: readableAuthError(error) };
+    }
   }
 
-  function logout() {
-    localStorage.removeItem(SESSION_KEY);
+  async function logout() {
+    if (auth) await signOut(auth);
     setIsAuthenticated(false);
     setAdminName('');
+    setAdminEmail('');
+    setRole('');
   }
 
   return (
     <AuthContext.Provider
-      value={{ isAuthenticated, adminName, checkingSession, login, logout }}
+      value={{
+        isAuthenticated,
+        adminName,
+        adminEmail,
+        role,
+        isSuperAdmin: role === 'Super Admin',
+        checkingSession,
+        login,
+        logout,
+      }}
     >
       {children}
     </AuthContext.Provider>

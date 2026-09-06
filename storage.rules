@@ -1,0 +1,14 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // This admin panel only reads documents. Uploads belong to the registration apps.
+    match /profileImages/{fileName} { allow read: if isAdmin(); }
+    match /businessImages/{fileName} { allow read: if isAdmin(); }
+    match /documents/{fileName} { allow read: if isAdmin(); }
+    match /bankDocuments/{fileName} { allow read: if isAdmin(); }
+  }
+}

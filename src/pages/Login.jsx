@@ -2,14 +2,14 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, EyeOff, Lock, User, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, ShieldCheck, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -19,20 +19,18 @@ export default function Login() {
     return <Navigate to="/" replace />;
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
-    setTimeout(() => {
-      const result = login(username, password);
-      if (result.success) {
-        const redirectTo = location.state?.from?.pathname || '/';
-        navigate(redirectTo, { replace: true });
-      } else {
-        setError(result.error);
-        setLoading(false);
-      }
-    }, 500);
+    const result = await login(email, password);
+    if (result.success) {
+      const redirectTo = location.state?.from?.pathname || '/';
+      navigate(redirectTo, { replace: true });
+    } else {
+      setError(result.error);
+      setLoading(false);
+    }
   }
 
   return (
@@ -88,20 +86,20 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-ink-200 mb-1.5 tracking-wide uppercase">
-                Username
+                Admin email
               </label>
               <div className="relative">
-                <User
+                <Mail
                   size={18}
                   className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-400"
                 />
                 <input
-                  type="text"
+                  type="email"
                   required
-                  autoComplete="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter admin username"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin@company.com"
                   className="w-full bg-white/[0.06] text-white placeholder:text-ink-400 rounded-xl pl-11 pr-4 py-3 ring-1 ring-white/10 focus:ring-2 focus:ring-gold-400/70 outline-none transition-all"
                 />
               </div>
@@ -168,7 +166,7 @@ export default function Login() {
 
           <div className="flex items-center gap-2 justify-center mt-7 text-ink-400 text-xs">
             <ShieldCheck size={14} className="text-gold-300" />
-            Restricted access · Admins only
+            Invite-only access · Admins only
           </div>
         </div>
 

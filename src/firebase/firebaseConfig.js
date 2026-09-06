@@ -12,6 +12,7 @@ import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getAuth } from 'firebase/auth';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -31,12 +32,14 @@ let app = null;
 let db = null;
 let storage = null;
 let auth = null;
+let functions = null;
 
 if (isFirebaseConfigured) {
   app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
   db = getFirestore(app);
   storage = getStorage(app);
   auth = getAuth(app);
+  functions = getFunctions(app, 'asia-south1');
 }
 
-export { app, db, storage, auth };
+export { app, db, storage, auth, functions };
