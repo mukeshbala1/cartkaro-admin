@@ -44,11 +44,19 @@ export function AuthProvider({ children }) {
 
       try {
         const token = await user.getIdTokenResult();
-        if (token.claims.admin === true) {
+        const isAdmin = token.claims.admin === true;
+        const isCustomerSupport = token.claims.customerSupport === true;
+        if (isAdmin || isCustomerSupport) {
           setIsAuthenticated(true);
-          setAdminName(user.displayName || user.email || 'Admin');
+          setAdminName(user.displayName || user.email || 'User');
           setAdminEmail(user.email || '');
-          setRole(token.claims.superAdmin === true ? 'Super Admin' : 'Admin');
+          setRole(
+            token.claims.superAdmin === true
+              ? 'Super Admin'
+              : isAdmin
+                ? 'Admin'
+                : 'Customer Support',
+          );
         } else {
           await signOut(auth);
         }
@@ -70,7 +78,9 @@ export function AuthProvider({ children }) {
     try {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const token = await credential.user.getIdTokenResult(true);
-      if (token.claims.admin !== true) {
+      const isAdmin = token.claims.admin === true;
+      const isCustomerSupport = token.claims.customerSupport === true;
+      if (!isAdmin && !isCustomerSupport) {
         await signOut(auth);
         return { success: false, error: 'This account is not authorised to access the admin panel.' };
       }
@@ -96,6 +106,7 @@ export function AuthProvider({ children }) {
         adminEmail,
         role,
         isSuperAdmin: role === 'Super Admin',
+        isCustomerSupport: role === 'Customer Support',
         checkingSession,
         login,
         logout,
