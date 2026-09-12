@@ -5,12 +5,36 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.admin == true;
     }
 
+    function isPartnerOwner() {
+      return request.auth != null && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // Delivery rider profiles
     match /partners/{partnerId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == partnerId);
+      allow create: if request.auth != null && request.auth.uid == partnerId;
+      allow update: if isAdmin() || (request.auth != null && request.auth.uid == partnerId);
+      allow delete: if isAdmin();
+    }
+
+    // Business partner registration drafts — written by the partner app,
+    // read and updated (verification decisions) by admins.
+    match /registration_drafts/{draftId} {
+      allow read: if isAdmin() || request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if isAdmin() || request.auth != null;
+      allow delete: if isAdmin();
+
+      // Admin activity log subcollection
+      match /adminActivity/{noteId} {
+        allow read, write: if isAdmin();
+      }
     }
 
     match /partnerUpdateRequests/{requestId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin() || isPartnerOwner();
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
     // Admin role records are created only by the trusted Cloud Function.
