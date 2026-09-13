@@ -24,12 +24,17 @@ import {
   BadgeCheck,
   Info,
   Pencil,
-  ClipboardList,
-  RefreshCw,
+  History,
+  MessageSquare,
+  Send,
+  X,
+  Eye,
+  Save,
 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import SectionCard, { InfoItem, InfoGrid } from '../../components/SectionCard';
 import DocumentCard from '../../components/DocumentCard';
+import ImageLightbox from '../../components/ImageLightbox';
 import StatusBadge from '../../components/StatusBadge';
 import { Loader, EmptyState, ConfirmDialog } from '../../components/Feedback';
 import {
@@ -40,6 +45,8 @@ import {
   setDocumentReviewStatus,
   verifyBankDetails,
   addAdminNote,
+  subscribeToAdminNotes,
+  updatePartnerDetails,
 } from '../../firebase/partnerService';
 import { formatDateTime, formatDate, BUSINESS_TYPE_LABELS } from '../../utils/dateUtils';
 import { useAuth } from '../../context/AuthContext';
@@ -240,6 +247,27 @@ export default function PartnerDetail() {
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
   const [savingAction, setSavingAction] = useState(false);
+  const [adminNotes, setAdminNotes] = useState([]);
+  const [newNote, setNewNote] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [lightbox, setLightbox] = useState({ open: false, url: '', label: '' });
+  const [editForm, setEditForm] = useState({
+    businessName: '',
+    ownerName: '',
+    mobile: '',
+    altMobile: '',
+    email: '',
+    address: '',
+    city: '',
+    state: '',
+    pinCode: '',
+    gstin: '',
+    openingTime: '',
+    closingTime: '',
+  });
 
   // Real-time Firestore listener
   useEffect(() => {
@@ -248,8 +276,63 @@ export default function PartnerDetail() {
       setPartner(data);
       setLoading(false);
     });
-    return unsub;
+    const unsubNotes = subscribeToAdminNotes(partnerId, (notes) => {
+      setAdminNotes(notes);
+    });
+    return () => {
+      unsub();
+      unsubNotes();
+    };
   }, [partnerId]);
+
+  function handleOpenEdit() {
+    if (!partner) return;
+    setEditForm({
+      businessName: partner.businessDetails?.businessName || '',
+      ownerName: partner.ownerDetails?.ownerName || '',
+      mobile: partner.ownerDetails?.mobile || '',
+      altMobile: partner.ownerDetails?.altMobile || '',
+      email: partner.ownerDetails?.email || '',
+      address: partner.businessDetails?.address || '',
+      city: partner.businessDetails?.city || '',
+      state: partner.businessDetails?.state || '',
+      pinCode: partner.businessDetails?.pinCode || '',
+      gstin: partner.businessDetails?.gstin || '',
+      openingTime: partner.businessTiming?.openingTime || '',
+      closingTime: partner.businessTiming?.closingTime || '',
+    });
+    setEditError('');
+    setIsEditOpen(true);
+  }
+
+  async function handleSaveEdit(e) {
+    e.preventDefault();
+    setSavingEdit(true);
+    setEditError('');
+    try {
+      await updatePartnerDetails(partner.id, editForm, adminEmail);
+      setActionSuccess('Partner details updated successfully.');
+      setIsEditOpen(false);
+    } catch (err) {
+      setEditError(err.message || 'Failed to update partner details.');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function handleAddNoteSubmit(e) {
+    e.preventDefault();
+    if (!newNote.trim()) return;
+    setAddingNote(true);
+    try {
+      await addAdminNote(partner.id, 'note', newNote.trim(), adminEmail);
+      setNewNote('');
+    } catch (err) {
+      setActionError(err.message || 'Failed to add admin note.');
+    } finally {
+      setAddingNote(false);
+    }
+  }
 
   const businessType = partner?.businessDetails?.businessType;
 
@@ -429,6 +512,13 @@ export default function PartnerDetail() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleOpenEdit}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/15 hover:bg-white/25 text-white ring-1 ring-white/30 transition-all shadow-xs"
+            >
+              <Pencil size={12} />
+              Edit Details
+            </button>
             <StatusBadge status={partner.verificationStatus} />
             {partner.isActive && (
               <span className="text-[11px] font-semibold bg-success-500/15 text-success-400 ring-1 ring-success-500/30 px-2.5 py-1 rounded-full">
@@ -520,14 +610,28 @@ export default function PartnerDetail() {
 
           {(b.logo || b.banner || (b.businessPhotos || []).length > 0) && (
             <div className="flex items-center gap-3 mt-5 flex-wrap">
-              {[b.logo, b.banner, ...(b.businessPhotos || [])].filter(Boolean).map((src, i) => (
-                <img
-                  key={i}
-                  src={src}
-                  alt="Business"
-                  className="w-20 h-20 rounded-xl object-cover ring-1 ring-ink-100 cursor-pointer hover:ring-navy-300 transition-all"
-                />
-              ))}
+              {[
+                b.logo && { url: b.logo, label: `${b.businessName} - Logo` },
+                b.banner && { url: b.banner, label: `${b.businessName} - Banner` },
+                ...(b.businessPhotos || []).map((src, i) => ({ url: src, label: `${b.businessName} - Store Photo ${i + 1}` })),
+              ]
+                .filter(Boolean)
+                .map((item, i) => (
+                  <div
+                    key={i}
+                    onClick={() => setLightbox({ open: true, url: item.url, label: item.label })}
+                    className="relative group cursor-pointer w-20 h-20 rounded-xl overflow-hidden ring-1 ring-ink-100 hover:ring-navy-400 transition-all"
+                  >
+                    <img
+                      src={item.url}
+                      alt={item.label}
+                      className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
+                      <Eye size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+                ))}
             </div>
           )}
           {!b.logo && !b.banner && !(b.businessPhotos || []).length && (
@@ -731,6 +835,80 @@ export default function PartnerDetail() {
           )}
         </SectionCard>
 
+        {/* ── 09 Admin Activity & Audit Trail ─────────────────────────── */}
+        <SectionCard index={9} title="Admin Activity & Audit Trail" icon={History}>
+          <div className="space-y-3 mb-6">
+            {adminNotes.length === 0 ? (
+              <p className="text-sm text-ink-400 py-1">No admin activity records or internal notes yet.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {adminNotes.map((entry) => {
+                  const actionTone =
+                    entry.action === 'approved'
+                      ? 'bg-success-50 text-success-700 ring-success-200'
+                      : entry.action === 'rejected'
+                      ? 'bg-danger-50 text-danger-700 ring-danger-200'
+                      : entry.action === 'returned_for_changes'
+                      ? 'bg-warning-50 text-warning-700 ring-warning-200'
+                      : entry.action === 'details_edited'
+                      ? 'bg-navy-50 text-navy-700 ring-navy-200'
+                      : entry.action === 'update_request_approved'
+                      ? 'bg-success-50 text-success-700 ring-success-200'
+                      : entry.action === 'update_request_rejected'
+                      ? 'bg-danger-50 text-danger-700 ring-danger-200'
+                      : 'bg-ink-50 text-ink-700 ring-ink-200';
+
+                  return (
+                    <div
+                      key={entry.id}
+                      className="p-3.5 rounded-xl ring-1 ring-ink-100 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ring-1 ${actionTone}`}>
+                            {entry.action?.replaceAll('_', ' ') || 'Note'}
+                          </span>
+                          <span className="text-xs text-ink-500">
+                            by <strong className="text-ink-700 font-medium">{entry.adminEmail || 'Admin'}</strong>
+                          </span>
+                        </div>
+                        <p className="text-sm text-navy-900 font-medium">{entry.note}</p>
+                      </div>
+                      <span className="text-xs text-ink-400 shrink-0">
+                        {entry.createdAt ? formatDateTime(entry.createdAt) : 'Just now'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Add internal note form */}
+          <form onSubmit={handleAddNoteSubmit} className="pt-4 border-t border-ink-100">
+            <label className="block text-xs font-semibold text-ink-600 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+              <MessageSquare size={13} /> Add Internal Admin Note
+            </label>
+            <div className="flex gap-2.5">
+              <input
+                type="text"
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                placeholder="Add an internal note or observation for this partner..."
+                className="flex-1 bg-ink-50 rounded-xl px-3.5 py-2.5 text-sm ring-1 ring-ink-200 focus:ring-2 focus:ring-navy-700 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={addingNote || !newNote.trim()}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-navy-800 hover:bg-navy-900 disabled:opacity-50 transition-colors shrink-0"
+              >
+                <Send size={13} />
+                {addingNote ? 'Saving…' : 'Post Note'}
+              </button>
+            </div>
+          </form>
+        </SectionCard>
+
         {/* ── Final Verification ────────────────────────────────────── */}
         <SectionCard index={null} title="Final Verification" icon={ListChecks}>
           <ChecklistProgress checklist={checklist} />
@@ -807,6 +985,180 @@ export default function PartnerDetail() {
           )}
         </SectionCard>
       </div>
+
+      {/* ── Edit Partner Modal ────────────────────────────────────────── */}
+      <AnimatePresence>
+        {isEditOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-white rounded-2xl ring-1 ring-ink-100 shadow-modal w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-ink-100 bg-navy-50/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-navy-100 text-navy-800 rounded-lg">
+                    <Pencil size={16} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-navy-900">Edit Partner Profile</h3>
+                    <p className="text-xs text-ink-500">Super Admin / Admin Override</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsEditOpen(false)}
+                  className="p-1.5 text-ink-400 hover:text-navy-900 rounded-lg transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveEdit} className="flex-1 overflow-y-auto p-6 space-y-4">
+                {editError && (
+                  <div className="p-3 bg-danger-50 text-danger-700 rounded-xl text-xs flex items-center gap-2">
+                    <AlertTriangle size={14} className="shrink-0" />
+                    {editError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Business Name</label>
+                    <input
+                      required
+                      type="text"
+                      value={editForm.businessName}
+                      onChange={(e) => setEditForm({ ...editForm, businessName: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">GSTIN Number</label>
+                    <input
+                      type="text"
+                      value={editForm.gstin}
+                      onChange={(e) => setEditForm({ ...editForm, gstin: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Owner Name</label>
+                    <input
+                      required
+                      type="text"
+                      value={editForm.ownerName}
+                      onChange={(e) => setEditForm({ ...editForm, ownerName: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Owner Email</label>
+                    <input
+                      type="email"
+                      value={editForm.email}
+                      onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Mobile Number</label>
+                    <input
+                      required
+                      type="tel"
+                      value={editForm.mobile}
+                      onChange={(e) => setEditForm({ ...editForm, mobile: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Alt Mobile Number</label>
+                    <input
+                      type="tel"
+                      value={editForm.altMobile}
+                      onChange={(e) => setEditForm({ ...editForm, altMobile: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Address</label>
+                    <input
+                      type="text"
+                      value={editForm.address}
+                      onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">City</label>
+                    <input
+                      type="text"
+                      value={editForm.city}
+                      onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">PIN Code</label>
+                    <input
+                      type="text"
+                      value={editForm.pinCode}
+                      onChange={(e) => setEditForm({ ...editForm, pinCode: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Opening Time</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 09:00 AM"
+                      value={editForm.openingTime}
+                      onChange={(e) => setEditForm({ ...editForm, openingTime: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink-600 mb-1">Closing Time</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 10:00 PM"
+                      value={editForm.closingTime}
+                      onChange={(e) => setEditForm({ ...editForm, closingTime: e.target.value })}
+                      className="w-full text-sm bg-ink-50 rounded-xl px-3 py-2 ring-1 ring-ink-200 focus:ring-2 focus:ring-gold-400 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-4 border-t border-ink-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditOpen(false)}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold text-ink-600 hover:bg-ink-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingEdit}
+                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-semibold text-navy-900 bg-gold-gradient disabled:opacity-60 shadow-xs"
+                  >
+                    <Save size={14} />
+                    {savingEdit ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Business Photo Lightbox ───────────────────────────────────── */}
+      <ImageLightbox
+        open={lightbox.open}
+        url={lightbox.url}
+        label={lightbox.label}
+        onClose={() => setLightbox({ open: false, url: '', label: '' })}
+      />
 
       {/* ── Approve confirm dialog ───────────────────────────────────── */}
       <ConfirmDialog

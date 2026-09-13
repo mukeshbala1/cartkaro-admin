@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, ChevronRight, Store, Pencil, RefreshCw } from 'lucide-react';
+import { Search, ChevronRight, Store, Pencil, ArrowLeft } from 'lucide-react';
 import Layout from '../../components/Layout';
 import StatusBadge from '../../components/StatusBadge';
 import { Loader, EmptyState } from '../../components/Feedback';
@@ -75,6 +75,14 @@ export default function PartnerList() {
 
   return (
     <Layout title="Partners" subtitle="All registered Partner Hub businesses">
+      <button
+        onClick={() => navigate('/partner-hub')}
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-500 hover:text-navy-800 transition-colors mb-5"
+      >
+        <ArrowLeft size={15} />
+        Back to Partner Hub
+      </button>
+
       <div className="bg-white rounded-xl2 ring-1 ring-ink-100 shadow-card overflow-hidden">
 
         {/* ── Filters ──────────────────────────────────────────────── */}

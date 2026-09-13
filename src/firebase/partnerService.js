@@ -22,8 +22,6 @@ import {
   getDoc,
   updateDoc,
   onSnapshot,
-  query,
-  orderBy,
   serverTimestamp,
   addDoc,
 } from 'firebase/firestore';
@@ -33,23 +31,55 @@ import { mockPartners, mockUpdateRequests } from '../data/mockPartners';
 // ---------------------------------------------------------------------------
 // Schema normaliser — flat registration_drafts → nested admin UI shape
 // ---------------------------------------------------------------------------
-function detectBusinessType(raw) {
-  if (raw.restaurantName) return 'restaurant';
-  if (raw.pharmacyName || raw.drugLicenseNumber) return 'medical';
+function detectBusinessType(raw, docId = '') {
+  if (raw.businessType) return raw.businessType.toLowerCase();
+  if (raw.restaurantName || (docId && docId.endsWith('_restaurant'))) return 'restaurant';
+  if (raw.pharmacyName || raw.drugLicenseNumber || (docId && docId.endsWith('_medical'))) return 'medical';
+  if (raw.groceryName || raw.storeName || (docId && docId.endsWith('_grocery'))) return 'grocery';
   return 'grocery';
 }
 
-function normaliseDraft(raw, docId) {
-  const businessType = raw.businessType || detectBusinessType(raw);
+function normaliseDraft(raw, docId = '') {
+  const businessType = detectBusinessType(raw, docId);
+  const typeLabel = businessType.charAt(0).toUpperCase() + businessType.slice(1);
 
   // Business name — field name varies by type in the partner app
-  const businessName =
+  const rawName =
     raw.businessName ||
     raw.restaurantName ||
     raw.pharmacyName ||
     raw.groceryName ||
     raw.storeName ||
     '';
+
+  const businessName = rawName.trim() || (raw.ownerName ? `${raw.ownerName.trim()}'s ${typeLabel}` : `${typeLabel} Partner`);
+
+  // Handle categories whether array or Firestore map {0: '...', 1: '...'}
+  let categories = [];
+  if (Array.isArray(raw.selectedCategories)) {
+    categories = raw.selectedCategories;
+  } else if (raw.selectedCategories && typeof raw.selectedCategories === 'object') {
+    categories = Object.values(raw.selectedCategories);
+  } else if (Array.isArray(raw.categories)) {
+    categories = raw.categories;
+  }
+
+  // Handle working days whether array or Firestore map
+  let workingDays = [];
+  if (Array.isArray(raw.workingDays)) {
+    workingDays = raw.workingDays;
+  } else if (raw.workingDays && typeof raw.workingDays === 'object') {
+    workingDays = Object.values(raw.workingDays);
+  }
+
+  // Handle business photos whether array or Firestore map
+  let businessPhotos = [];
+  const rawPhotos = raw.restaurantPhotos || raw.storePhotos || raw.businessPhotos || [];
+  if (Array.isArray(rawPhotos)) {
+    businessPhotos = rawPhotos.filter(Boolean);
+  } else if (rawPhotos && typeof rawPhotos === 'object') {
+    businessPhotos = Object.values(rawPhotos).filter(Boolean);
+  }
 
   return {
     // ── Identity ────────────────────────────────────────────────────────
@@ -64,7 +94,7 @@ function normaliseDraft(raw, docId) {
     verificationFeedback: raw.verificationFeedback || null,
 
     // ── Timestamps ──────────────────────────────────────────────────────
-    createdAt: raw.createdAt || raw.submittedAt || null,
+    createdAt: raw.createdAt || raw.submittedAt || raw.updatedAt || null,
     reviewedAt: raw.reviewedAt || null,
 
     // ── Owner Details ───────────────────────────────────────────────────
@@ -80,7 +110,7 @@ function normaliseDraft(raw, docId) {
     businessDetails: {
       businessType,
       businessName,
-      address: raw.restaurantAddress || raw.address || raw.businessAddress || '',
+      address: raw.restaurantAddress || raw.storeAddress || raw.address || raw.businessAddress || '',
       area: raw.area || '',
       city: raw.city || '',
       state: raw.state || '',
@@ -89,28 +119,30 @@ function normaliseDraft(raw, docId) {
       longitude: parseFloat(raw.lng || raw.longitude) || null,
       logo:
         raw.restaurantLogoPath ||
+        raw.storeLogoPath ||
         raw.logoPath ||
         raw.businessLogo ||
         raw.logo ||
         '',
       banner:
         raw.restaurantBannerPath ||
+        raw.storeBannerPath ||
         raw.bannerPath ||
         raw.businessBanner ||
         raw.banner ||
         '',
-      businessPhotos: raw.restaurantPhotos || raw.businessPhotos || [],
-      gstin: raw.gstNumber || '',
+      businessPhotos,
+      gstin: raw.gstNumber || raw.gstin || '',
     },
 
     // ── Categories ──────────────────────────────────────────────────────
-    categories: raw.selectedCategories || raw.categories || [],
+    categories,
 
     // ── Business Timings ─────────────────────────────────────────────────
     businessTiming: {
       openingTime: raw.openingTime || '',
       closingTime: raw.closingTime || '',
-      workingDays: raw.workingDays || [],
+      workingDays,
       acceptOnlineOrders: raw.acceptOnlineOrders ?? false,
       // restaurant
       acceptTableOrders: raw.acceptTableOrders ?? false,
@@ -167,7 +199,7 @@ function normaliseDraft(raw, docId) {
       packagingCharge: raw.packagingCharge || '',
       // grocery
       minimumOrderAmount: raw.minimumOrderAmount || '',
-      estimatedDeliveryTime: raw.estimatedDeliveryTime || '',
+      estimatedDeliveryTime: raw.estimatedDeliveryTime || raw.estDelivery || '',
       // medical
       prescriptionRequired: raw.prescriptionRequired ?? false,
       sameDayDelivery: raw.sameDayDelivery ?? false,
@@ -185,12 +217,13 @@ function normaliseDraft(raw, docId) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Inverse normaliser — write admin decisions back to the flat doc shape
-// ---------------------------------------------------------------------------
-function buildAdminUpdate(fields) {
-  // The registration_drafts doc stores admin fields at root level
-  return fields;
+function extractDocTime(docData) {
+  const t = docData.createdAt || docData.submittedAt || docData.updatedAt;
+  if (!t) return 0;
+  if (t.seconds) return t.seconds * 1000;
+  if (t._seconds) return t._seconds * 1000;
+  const parsed = new Date(t).getTime();
+  return isNaN(parsed) ? 0 : parsed;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,28 +237,22 @@ let demoUpdateRequests = mockUpdateRequests.map((r) => ({ ...r }));
 // ---------------------------------------------------------------------------
 
 export async function fetchPartners() {
-  if (!isFirebaseConfigured) {
+  if (!isFirebaseConfigured || !db) {
     return Promise.resolve(demoPartners);
   }
   try {
-    const snap = await getDocs(
-      query(collection(db, 'registration_drafts'), orderBy('createdAt', 'desc'))
-    );
-    if (!snap.empty) {
-      return snap.docs.map((d) => normaliseDraft(d.data(), d.id));
-    }
-    // Fallback: try without orderBy (no createdAt index required)
-    const snap2 = await getDocs(collection(db, 'registration_drafts'));
-    return snap2.docs.map((d) => normaliseDraft(d.data(), d.id));
-  } catch (e) {
-    console.warn('[partnerService] fetchPartners error — trying without orderBy:', e.message);
     const snap = await getDocs(collection(db, 'registration_drafts'));
-    return snap.docs.map((d) => normaliseDraft(d.data(), d.id));
+    const items = snap.docs.map((d) => normaliseDraft(d.data(), d.id));
+    items.sort((a, b) => extractDocTime(b) - extractDocTime(a));
+    return items;
+  } catch (e) {
+    console.error('[partnerService] fetchPartners error:', e);
+    return [];
   }
 }
 
 export async function fetchPartnerById(partnerId) {
-  if (!isFirebaseConfigured) {
+  if (!isFirebaseConfigured || !db) {
     return Promise.resolve(demoPartners.find((p) => p.id === partnerId) || null);
   }
   const ref = doc(db, 'registration_drafts', partnerId);
@@ -238,54 +265,24 @@ export async function fetchPartnerById(partnerId) {
 // ---------------------------------------------------------------------------
 
 export function subscribeToPartners(callback) {
-  if (!isFirebaseConfigured) {
+  if (!isFirebaseConfigured || !db) {
     callback(demoPartners);
     return () => {};
   }
 
-  // Try with orderBy first; if it fails (missing index), fall back to unordered.
-  let unsubscribed = false;
-  let unsub = () => {};
-
-  const tryOrdered = () => {
-    const q = query(collection(db, 'registration_drafts'), orderBy('createdAt', 'desc'));
-    unsub = onSnapshot(
-      q,
-      (snap) => {
-        callback(snap.docs.map((d) => normaliseDraft(d.data(), d.id)));
-      },
-      (err) => {
-        console.warn('[partnerService] ordered snapshot failed, falling back:', err.message);
-        if (!unsubscribed) tryUnordered();
-      }
-    );
-  };
-
-  const tryUnordered = () => {
-    unsub = onSnapshot(
-      collection(db, 'registration_drafts'),
-      (snap) => {
-        const items = snap.docs.map((d) => normaliseDraft(d.data(), d.id));
-        // Sort by createdAt client-side
-        items.sort((a, b) => {
-          const ta = a.createdAt?._seconds || a.createdAt?.seconds || 0;
-          const tb = b.createdAt?._seconds || b.createdAt?.seconds || 0;
-          return tb - ta;
-        });
-        callback(items);
-      },
-      (err) => {
-        console.error('[partnerService] unordered snapshot error:', err);
-      }
-    );
-  };
-
-  tryOrdered();
-
-  return () => {
-    unsubscribed = true;
-    unsub();
-  };
+  const colRef = collection(db, 'registration_drafts');
+  return onSnapshot(
+    colRef,
+    (snap) => {
+      const items = snap.docs.map((d) => normaliseDraft(d.data(), d.id));
+      items.sort((a, b) => extractDocTime(b) - extractDocTime(a));
+      callback(items);
+    },
+    (err) => {
+      console.error('[partnerService] subscribeToPartners error:', err);
+      callback([]);
+    }
+  );
 }
 
 export function subscribeToPartner(partnerId, callback) {
@@ -382,6 +379,84 @@ export function returnPartnerForChanges(partnerId, reason, reviewedBy) {
   return setPartnerVerification(partnerId, 'pending', reason, reviewedBy);
 }
 
+/**
+ * Direct Partner Profile Editing (Super Admin / Admin Override)
+ */
+export async function updatePartnerDetails(partnerId, fields, adminEmail = '') {
+  const docFields = {
+    businessName: fields.businessName || '',
+    restaurantName: fields.businessName || '',
+    storeName: fields.businessName || '',
+    groceryName: fields.businessName || '',
+    medicalName: fields.businessName || '',
+    ownerName: fields.ownerName || '',
+    mobile: fields.mobile || '',
+    mobileNumber: fields.mobile || '',
+    phone: fields.mobile || '',
+    altMobile: fields.altMobile || '',
+    email: fields.email || '',
+    address: fields.address || '',
+    restaurantAddress: fields.address || '',
+    businessAddress: fields.address || '',
+    city: fields.city || '',
+    state: fields.state || '',
+    pincode: fields.pinCode || fields.pincode || '',
+    pinCode: fields.pinCode || fields.pincode || '',
+    gstNumber: fields.gstin || fields.gstNumber || '',
+    commissionRate: fields.commissionRate !== undefined ? Number(fields.commissionRate) : undefined,
+    'businessTiming.openingTime': fields.openingTime || undefined,
+    'businessTiming.closingTime': fields.closingTime || undefined,
+    openingTime: fields.openingTime || undefined,
+    closingTime: fields.closingTime || undefined,
+  };
+
+  // Clean undefined fields
+  const payload = {};
+  Object.entries(docFields).forEach(([k, v]) => {
+    if (v !== undefined) payload[k] = v;
+  });
+
+  if (!isFirebaseConfigured) {
+    demoPartners = demoPartners.map((p) => {
+      if (p.id !== partnerId) return p;
+      return {
+        ...p,
+        businessDetails: {
+          ...p.businessDetails,
+          businessName: fields.businessName || p.businessDetails.businessName,
+          address: fields.address || p.businessDetails.address,
+          city: fields.city || p.businessDetails.city,
+          state: fields.state || p.businessDetails.state,
+          pinCode: fields.pinCode || p.businessDetails.pinCode,
+          gstin: fields.gstin || p.businessDetails.gstin,
+        },
+        ownerDetails: {
+          ...p.ownerDetails,
+          ownerName: fields.ownerName || p.ownerDetails.ownerName,
+          mobile: fields.mobile || p.ownerDetails.mobile,
+          altMobile: fields.altMobile || p.ownerDetails.altMobile,
+          email: fields.email || p.ownerDetails.email,
+        },
+      };
+    });
+    return Promise.resolve();
+  }
+
+  const ref = doc(db, 'registration_drafts', partnerId);
+  await updateDoc(ref, {
+    ...payload,
+    lastModifiedByAdmin: adminEmail,
+    updatedAt: serverTimestamp(),
+  });
+
+  await addAdminNote(
+    partnerId,
+    'details_edited',
+    `Partner details updated directly by ${adminEmail || 'admin'}.`,
+    adminEmail
+  );
+}
+
 // ---------------------------------------------------------------------------
 // DOCUMENT & BANK VERIFICATION
 // ---------------------------------------------------------------------------
@@ -396,7 +471,6 @@ export async function setDocumentReviewStatus(partnerId, docKey, status) {
     return Promise.resolve();
   }
   const ref = doc(db, 'registration_drafts', partnerId);
-  // Read current reviewStatus from Firestore to merge
   const snap = await getDoc(ref);
   const existing = snap.data()?.documentReviewStatus || {};
   return updateDoc(ref, {
@@ -432,32 +506,109 @@ export async function addAdminNote(partnerId, action, note, adminEmail) {
   });
 }
 
+export function subscribeToAdminNotes(partnerId, callback) {
+  if (!isFirebaseConfigured) {
+    callback([]);
+    return () => {};
+  }
+  const notesCol = collection(db, 'registration_drafts', partnerId, 'adminActivity');
+  return onSnapshot(
+    notesCol,
+    (snap) => {
+      const notes = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      notes.sort((a, b) => {
+        const ta = a.createdAt?.seconds || 0;
+        const tb = b.createdAt?.seconds || 0;
+        return tb - ta;
+      });
+      callback(notes);
+    },
+    (err) => {
+      console.warn('[partnerService] subscribeToAdminNotes error:', err.message);
+      callback([]);
+    }
+  );
+}
+
 // ---------------------------------------------------------------------------
-// UPDATE REQUESTS (unchanged)
+// UPDATE REQUESTS
 // ---------------------------------------------------------------------------
 
 export async function fetchUpdateRequests() {
-  if (!isFirebaseConfigured) {
+  if (!isFirebaseConfigured || !db) {
     return Promise.resolve(demoUpdateRequests);
   }
   try {
-    const snap = await getDocs(
-      query(collection(db, 'partnerUpdateRequests'), orderBy('requestedAt', 'desc'))
-    );
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  } catch {
     const snap = await getDocs(collection(db, 'partnerUpdateRequests'));
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    items.sort((a, b) => extractDocTime(b) - extractDocTime(a));
+    return items;
+  } catch (err) {
+    console.warn('[partnerService] fetchUpdateRequests error:', err.message);
+    return [];
   }
 }
 
-export async function decideUpdateRequest(requestId, decision) {
+export function subscribeToUpdateRequests(callback) {
+  if (!isFirebaseConfigured || !db) {
+    callback(demoUpdateRequests);
+    return () => {};
+  }
+  const ref = collection(db, 'partnerUpdateRequests');
+  return onSnapshot(
+    ref,
+    (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      items.sort((a, b) => extractDocTime(b) - extractDocTime(a));
+      callback(items);
+    },
+    (err) => {
+      console.warn('[partnerService] subscribeToUpdateRequests error:', err.message);
+      callback([]);
+    }
+  );
+}
+
+export async function decideUpdateRequest(requestId, decision, adminEmail = '', requestData = null) {
   if (!isFirebaseConfigured) {
     demoUpdateRequests = demoUpdateRequests.map((r) =>
       r.id === requestId ? { ...r, status: decision } : r
     );
     return Promise.resolve();
   }
+
   const ref = doc(db, 'partnerUpdateRequests', requestId);
-  return updateDoc(ref, { status: decision });
+  await updateDoc(ref, {
+    status: decision,
+    decidedAt: serverTimestamp(),
+    decidedBy: adminEmail,
+  });
+
+  // If approved and request has target partner + new data, apply updates to the partner doc
+  if (decision === 'approved' && requestData?.partnerId && requestData?.newData) {
+    try {
+      const partnerRef = doc(db, 'registration_drafts', requestData.partnerId);
+      await updateDoc(partnerRef, {
+        ...requestData.newData,
+        updatedAt: serverTimestamp(),
+        lastUpdateAppliedAt: serverTimestamp(),
+      });
+      await addAdminNote(
+        requestData.partnerId,
+        'update_request_approved',
+        `Approved ${requestData.type || 'profile'} update request.`,
+        adminEmail
+      );
+    } catch (err) {
+      console.warn('[partnerService] Error applying update request to partner doc:', err.message);
+    }
+  } else if (decision === 'rejected' && requestData?.partnerId) {
+    await addAdminNote(
+      requestData.partnerId,
+      'update_request_rejected',
+      `Rejected ${requestData.type || 'profile'} update request.`,
+      adminEmail
+    );
+  }
 }
+

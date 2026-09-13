@@ -1,12 +1,14 @@
 // src/pages/PartnerHub/UpdateRequests.jsx
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { FileClock, ArrowRight, Check, X } from 'lucide-react';
+import { FileClock, ArrowRight, Check, X, ArrowLeft } from 'lucide-react';
 import Layout from '../../components/Layout';
 import StatusBadge from '../../components/StatusBadge';
 import { Loader, EmptyState, ConfirmDialog } from '../../components/Feedback';
-import { fetchUpdateRequests, decideUpdateRequest } from '../../firebase/partnerService';
+import { subscribeToUpdateRequests, decideUpdateRequest } from '../../firebase/partnerService';
 import { formatDateTime } from '../../utils/dateUtils';
+import { useAuth } from '../../context/AuthContext';
 
 const tabs = [
   { key: 'pending', label: 'Pending' },
@@ -15,28 +17,26 @@ const tabs = [
 ];
 
 export default function UpdateRequests() {
+  const navigate = useNavigate();
+  const { adminEmail } = useAuth();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('pending');
   const [confirm, setConfirm] = useState(null); // { request, decision }
 
   useEffect(() => {
-    let active = true;
-    fetchUpdateRequests().then((data) => {
-      if (!active) return;
+    const unsub = subscribeToUpdateRequests((data) => {
       setRequests(data);
       setLoading(false);
     });
-    return () => {
-      active = false;
-    };
+    return unsub;
   }, []);
 
   const filtered = useMemo(() => requests.filter((r) => r.status === tab), [requests, tab]);
 
   async function handleDecision() {
     if (!confirm) return;
-    await decideUpdateRequest(confirm.request.id, confirm.decision);
+    await decideUpdateRequest(confirm.request.id, confirm.decision, adminEmail, confirm.request);
     setRequests((prev) =>
       prev.map((r) => (r.id === confirm.request.id ? { ...r, status: confirm.decision } : r))
     );
@@ -45,6 +45,14 @@ export default function UpdateRequests() {
 
   return (
     <Layout title="Update Requests" subtitle="Partner Hub settings change approvals">
+      <button
+        onClick={() => navigate('/partner-hub')}
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-500 hover:text-navy-800 transition-colors mb-5"
+      >
+        <ArrowLeft size={15} />
+        Back to Partner Hub
+      </button>
+
       <div className="flex items-center gap-1.5 mb-5">
         {tabs.map((t) => (
           <button

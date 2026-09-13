@@ -2,7 +2,20 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isAdmin() {
-      return request.auth != null && request.auth.token.admin == true;
+      return request.auth != null && (
+        request.auth.token.admin == true ||
+        request.auth.token.superAdmin == true ||
+        request.auth.token.customerSupport == true ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isSuperAdmin() {
+      return request.auth != null && (
+        request.auth.token.superAdmin == true ||
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'superAdmin')
+      );
     }
 
     function isPartnerOwner() {
@@ -37,9 +50,10 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // Admin role records are created only by the trusted Cloud Function.
+    // Admin role records — manageable by Super Admins
     match /admins/{adminId} {
-      allow read, write: if false;
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
     }
 
     match /{document=**} {

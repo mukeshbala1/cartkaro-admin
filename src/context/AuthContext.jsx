@@ -5,7 +5,8 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth';
-import { auth, isFirebaseConfigured } from '../firebase/firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db, isFirebaseConfigured } from '../firebase/firebaseConfig';
 
 const AuthContext = createContext(null);
 
@@ -17,6 +18,43 @@ function readableAuthError(error) {
   if (error?.code === 'auth/too-many-requests') return 'Too many attempts. Please try again later.';
   if (error?.code === 'auth/network-request-failed') return 'Network error. Check your connection and try again.';
   return 'Unable to sign in. Please try again.';
+}
+
+async function resolveUserRole(user) {
+  try {
+    const token = await user.getIdTokenResult();
+    let isSuperAdmin = token.claims?.superAdmin === true;
+    let isAdmin = token.claims?.admin === true || isSuperAdmin;
+    let isCustomerSupport = token.claims?.customerSupport === true;
+
+    // Fallback: check /admins/{uid} Firestore document
+    if (!isAdmin && !isCustomerSupport && db) {
+      try {
+        const adminDoc = await getDoc(doc(db, 'admins', user.uid));
+        if (adminDoc.exists()) {
+          const data = adminDoc.data();
+          const r = data.role || 'admin';
+          isAdmin = r === 'admin' || r === 'superAdmin';
+          isSuperAdmin = r === 'superAdmin';
+          isCustomerSupport = r === 'customerSupport';
+        }
+      } catch (err) {
+        console.warn('[AuthContext] Firestore admin check failed:', err);
+      }
+    }
+
+    if (isAdmin || isCustomerSupport) {
+      const roleLabel = isSuperAdmin
+        ? 'Super Admin'
+        : isAdmin
+          ? 'Admin'
+          : 'Customer Support';
+      return { isAuthorized: true, roleLabel, isSuperAdmin, isCustomerSupport };
+    }
+  } catch {
+    // ignore
+  }
+  return { isAuthorized: false, roleLabel: '', isSuperAdmin: false, isCustomerSupport: false };
 }
 
 export function AuthProvider({ children }) {
@@ -42,29 +80,17 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      try {
-        const token = await user.getIdTokenResult();
-        const isAdmin = token.claims.admin === true;
-        const isCustomerSupport = token.claims.customerSupport === true;
-        if (isAdmin || isCustomerSupport) {
-          setIsAuthenticated(true);
-          setAdminName(user.displayName || user.email || 'User');
-          setAdminEmail(user.email || '');
-          setRole(
-            token.claims.superAdmin === true
-              ? 'Super Admin'
-              : isAdmin
-                ? 'Admin'
-                : 'Customer Support',
-          );
-        } else {
-          await signOut(auth);
-        }
-      } catch {
+      const roleInfo = await resolveUserRole(user);
+      if (roleInfo.isAuthorized) {
+        setIsAuthenticated(true);
+        setAdminName(user.displayName || user.email || 'Admin');
+        setAdminEmail(user.email || '');
+        setRole(roleInfo.roleLabel);
+      } else {
+        await signOut(auth);
         setIsAuthenticated(false);
-      } finally {
-        setCheckingSession(false);
       }
+      setCheckingSession(false);
     });
 
     return unsubscribe;
@@ -77,10 +103,8 @@ export function AuthProvider({ children }) {
 
     try {
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-      const token = await credential.user.getIdTokenResult(true);
-      const isAdmin = token.claims.admin === true;
-      const isCustomerSupport = token.claims.customerSupport === true;
-      if (!isAdmin && !isCustomerSupport) {
+      const roleInfo = await resolveUserRole(credential.user);
+      if (!roleInfo.isAuthorized) {
         await signOut(auth);
         return { success: false, error: 'This account is not authorised to access the admin panel.' };
       }
