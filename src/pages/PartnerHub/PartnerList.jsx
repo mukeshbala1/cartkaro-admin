@@ -270,11 +270,15 @@ export default function PartnerList() {
 }
 
 function LogoThumb({ logo, name, size = 36 }) {
-  if (logo) {
+  const [imgError, setImgError] = useState(false);
+  const isWeb = logo && (logo.startsWith('http://') || logo.startsWith('https://') || logo.startsWith('data:') || logo.startsWith('blob:'));
+
+  if (logo && isWeb && !imgError) {
     return (
       <img
         src={logo}
         alt={name}
+        onError={() => setImgError(true)}
         style={{ width: size, height: size }}
         className="rounded-lg object-cover ring-1 ring-ink-100 shrink-0"
       />

@@ -30,6 +30,8 @@ import {
   X,
   Eye,
   Save,
+  Smartphone,
+  Check,
 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import SectionCard, { InfoItem, InfoGrid } from '../../components/SectionCard';
@@ -50,6 +52,22 @@ import {
 } from '../../firebase/partnerService';
 import { formatDateTime, formatDate, BUSINESS_TYPE_LABELS } from '../../utils/dateUtils';
 import { useAuth } from '../../context/AuthContext';
+
+function isWebUrl(url) {
+  if (!url) return false;
+  return (
+    url.startsWith('http://') ||
+    url.startsWith('https://') ||
+    url.startsWith('data:') ||
+    url.startsWith('blob:')
+  );
+}
+
+function getFileName(url) {
+  if (!url) return '';
+  const parts = url.split('/');
+  return parts[parts.length - 1] || url;
+}
 
 // ---------------------------------------------------------------------------
 // Document sets per business type
@@ -254,6 +272,7 @@ export default function PartnerDetail() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState('');
   const [lightbox, setLightbox] = useState({ open: false, url: '', label: '' });
+  const [mediaModalOpen, setMediaModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     businessName: '',
     ownerName: '',
@@ -284,6 +303,148 @@ export default function PartnerDetail() {
       unsubNotes();
     };
   }, [partnerId]);
+
+  // Aggregate all uploaded media & legal documents into a unified list
+  const allMediaList = useMemo(() => {
+    if (!partner) return [];
+    const list = [];
+    const b = partner.businessDetails || {};
+    const o = partner.ownerDetails || {};
+    const docs = partner.legalDocuments || {};
+    const bank = partner.bankDetails || {};
+
+    if (o.profilePhoto) {
+      list.push({
+        type: 'profile',
+        label: 'Owner Profile Photo',
+        category: 'Owner Details',
+        url: o.profilePhoto,
+        details: o.ownerName,
+      });
+    }
+
+    if (b.logo) {
+      list.push({
+        type: 'logo',
+        label: 'Store Logo',
+        category: 'Branding',
+        url: b.logo,
+        details: b.businessName,
+      });
+    }
+
+    if (b.banner) {
+      list.push({
+        type: 'banner',
+        label: 'Store Banner',
+        category: 'Branding',
+        url: b.banner,
+        details: b.businessName,
+      });
+    }
+
+    (b.businessPhotos || []).forEach((photoUrl, idx) => {
+      if (photoUrl) {
+        list.push({
+          type: 'store_photo',
+          label: `Store Photo ${idx + 1}`,
+          category: 'Store Gallery',
+          url: photoUrl,
+          details: b.businessName,
+        });
+      }
+    });
+
+    if (docs.fssaiCertUrl) {
+      list.push({
+        type: 'fssai',
+        label: 'FSSAI Certificate',
+        category: 'Legal Document',
+        url: docs.fssaiCertUrl,
+        number: docs.fssaiNumber,
+        status: docs.reviewStatus?.fssai,
+      });
+    }
+
+    if (docs.gstCertUrl) {
+      list.push({
+        type: 'gst',
+        label: 'GST Certificate',
+        category: 'Legal Document',
+        url: docs.gstCertUrl,
+        number: docs.gstNumber,
+        status: docs.reviewStatus?.gst,
+      });
+    }
+
+    if (docs.tradeLicenseUrl) {
+      list.push({
+        type: 'tradeLicense',
+        label: 'Trade License',
+        category: 'Legal Document',
+        url: docs.tradeLicenseUrl,
+        number: docs.tradeLicenseNumber,
+        status: docs.reviewStatus?.tradeLicense,
+      });
+    }
+
+    if (docs.panCardUrl) {
+      list.push({
+        type: 'pan',
+        label: 'PAN Card',
+        category: 'Legal Document',
+        url: docs.panCardUrl,
+        number: docs.panNumber,
+        status: docs.reviewStatus?.pan,
+      });
+    }
+
+    if (docs.aadhaarCardUrl) {
+      list.push({
+        type: 'aadhaar',
+        label: 'Aadhaar Card',
+        category: 'Legal Document',
+        url: docs.aadhaarCardUrl,
+        number: docs.aadhaarNumber,
+        status: docs.reviewStatus?.aadhaar,
+      });
+    }
+
+    if (docs.drugLicenseUrl) {
+      list.push({
+        type: 'drugLicense',
+        label: 'Drug License',
+        category: 'Legal Document',
+        url: docs.drugLicenseUrl,
+        number: docs.drugLicenseNumber,
+        status: docs.reviewStatus?.drugLicense,
+      });
+    }
+
+    if (docs.pharmacistCertUrl) {
+      list.push({
+        type: 'pharmacist',
+        label: 'Pharmacist Certificate',
+        category: 'Legal Document',
+        url: docs.pharmacistCertUrl,
+        number: docs.pharmacistRegNumber,
+        status: docs.reviewStatus?.pharmacist,
+      });
+    }
+
+    if (bank.cancelledChequeUrl) {
+      list.push({
+        type: 'cancelledCheque',
+        label: 'Cancelled Cheque / Passbook',
+        category: 'Bank Verification',
+        url: bank.cancelledChequeUrl,
+        number: bank.accountNumber,
+        verified: bank.verified,
+      });
+    }
+
+    return list;
+  }, [partner]);
 
   function handleOpenEdit() {
     if (!partner) return;
@@ -494,8 +655,16 @@ export default function PartnerDetail() {
         <div className="absolute inset-0 bg-aurora" />
         <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center font-display font-bold text-xl text-gold-300 overflow-hidden">
-              {b.logo ? (
+            <div
+              onClick={() => {
+                if (b.logo) {
+                  setLightbox({ open: true, url: b.logo, label: `${b.businessName} - Logo` });
+                }
+              }}
+              className={`w-14 h-14 rounded-xl bg-white/10 ring-1 ring-white/20 flex items-center justify-center font-display font-bold text-xl text-gold-300 overflow-hidden shrink-0 ${b.logo ? 'cursor-pointer hover:ring-gold-300 transition-all' : ''}`}
+              title={b.logo ? 'Click to enlarge logo' : undefined}
+            >
+              {b.logo && (b.logo.startsWith('http://') || b.logo.startsWith('https://') || b.logo.startsWith('data:') || b.logo.startsWith('blob:')) ? (
                 <img src={b.logo} alt={b.businessName} className="w-full h-full object-cover" />
               ) : (
                 b.businessName?.charAt(0).toUpperCase() || <Store size={22} />
@@ -511,7 +680,14 @@ export default function PartnerDetail() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={() => setMediaModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-gold-400/20 hover:bg-gold-400/30 text-gold-300 ring-1 ring-gold-400/40 transition-all shadow-xs"
+            >
+              <ImageIcon size={13} />
+              All Media &amp; Docs ({allMediaList.length})
+            </button>
             <button
               onClick={handleOpenEdit}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-white/15 hover:bg-white/25 text-white ring-1 ring-white/30 transition-all shadow-xs"
@@ -562,6 +738,60 @@ export default function PartnerDetail() {
       <div className="space-y-6">
         {/* ── 01 Owner Details ──────────────────────────────────────── */}
         <SectionCard index={1} title="Owner Details" icon={User}>
+          {/* Owner Profile Photo / Avatar Banner */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-xl bg-ink-50/70 ring-1 ring-ink-100 mb-5">
+            <div
+              onClick={() => {
+                if (o.profilePhoto) {
+                  setLightbox({ open: true, url: o.profilePhoto, label: `${o.ownerName || 'Owner'} - Profile Photo` });
+                }
+              }}
+              className={`relative group ${o.profilePhoto ? 'cursor-pointer hover:ring-navy-400' : ''} w-16 h-16 rounded-2xl ring-2 ring-navy-200 bg-white flex items-center justify-center shrink-0 overflow-hidden shadow-xs transition-all`}
+            >
+              {o.profilePhoto && isWebUrl(o.profilePhoto) ? (
+                <img src={o.profilePhoto} alt={o.ownerName} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+              ) : o.profilePhoto ? (
+                <div className="flex flex-col items-center justify-center text-center p-1">
+                  <Smartphone size={20} className="text-navy-700" />
+                  <span className="text-[8px] font-bold text-navy-600 uppercase mt-0.5">Photo</span>
+                </div>
+              ) : (
+                <User size={26} className="text-navy-700" />
+              )}
+              {o.profilePhoto && (
+                <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
+                  <Eye size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-display font-bold text-navy-900 text-base">{o.ownerName || 'Partner Owner'}</p>
+                {o.profilePhoto ? (
+                  <span className="text-[10px] font-semibold bg-success-50 text-success-700 px-2 py-0.5 rounded-full ring-1 ring-success-200">
+                    Profile Photo Uploaded
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-semibold bg-ink-100 text-ink-500 px-2 py-0.5 rounded-full">
+                    No Photo Uploaded
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-ink-500 mt-0.5 truncate">
+                {o.mobile} {o.email ? `· ${o.email}` : ''}
+              </p>
+              {o.profilePhoto && (
+                <button
+                  onClick={() => setLightbox({ open: true, url: o.profilePhoto, label: `${o.ownerName || 'Owner'} - Profile Photo` })}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-navy-700 hover:text-gold-600 mt-1.5 transition-colors"
+                >
+                  <Eye size={12} /> Preview Profile Photo
+                </button>
+              )}
+            </div>
+          </div>
+
           <InfoGrid>
             <InfoItem label="Owner Name" value={o.ownerName} />
             <InfoItem label="Registered Mobile" value={o.mobile} />
@@ -608,32 +838,95 @@ export default function PartnerDetail() {
             {b.gstin && <InfoItem label="GSTIN" value={b.gstin} />}
           </InfoGrid>
 
+          {/* ── Business Visual Branding (Logo, Banner, Photos) ── */}
           {(b.logo || b.banner || (b.businessPhotos || []).length > 0) && (
-            <div className="flex items-center gap-3 mt-5 flex-wrap">
-              {[
-                b.logo && { url: b.logo, label: `${b.businessName} - Logo` },
-                b.banner && { url: b.banner, label: `${b.businessName} - Banner` },
-                ...(b.businessPhotos || []).map((src, i) => ({ url: src, label: `${b.businessName} - Store Photo ${i + 1}` })),
-              ]
-                .filter(Boolean)
-                .map((item, i) => (
+            <div className="mt-5 pt-5 border-t border-ink-100 space-y-4">
+              <p className="text-xs font-semibold text-ink-600 uppercase tracking-wide flex items-center gap-1.5">
+                <ImageIcon size={13} /> Business Visuals &amp; Branding
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                {/* Store Logo Card */}
+                {b.logo && (
                   <div
-                    key={i}
-                    onClick={() => setLightbox({ open: true, url: item.url, label: item.label })}
-                    className="relative group cursor-pointer w-20 h-20 rounded-xl overflow-hidden ring-1 ring-ink-100 hover:ring-navy-400 transition-all"
+                    onClick={() => setLightbox({ open: true, url: b.logo, label: `${b.businessName} - Store Logo` })}
+                    className="p-3.5 rounded-xl ring-1 ring-ink-100 bg-ink-50/50 hover:bg-ink-50 cursor-pointer transition-all group"
                   >
-                    <img
-                      src={item.url}
-                      alt={item.label}
-                      className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
-                    />
-                    <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
-                      <Eye size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold uppercase text-navy-800">Store Logo</span>
+                      <Eye size={13} className="text-ink-400 group-hover:text-navy-700 transition-colors" />
+                    </div>
+                    <div className="w-full h-28 rounded-lg bg-white ring-1 ring-ink-100 overflow-hidden flex items-center justify-center">
+                      {isWebUrl(b.logo) ? (
+                        <img src={b.logo} alt="Logo" className="w-full h-full object-contain p-2 transition-transform group-hover:scale-105" />
+                      ) : (
+                        <div className="p-2 text-center">
+                          <Smartphone size={22} className="text-navy-700 mx-auto mb-1" />
+                          <p className="text-[11px] font-medium text-navy-900 truncate max-w-[140px]">{getFileName(b.logo)}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* Store Banner Card */}
+                {b.banner && (
+                  <div
+                    onClick={() => setLightbox({ open: true, url: b.banner, label: `${b.businessName} - Store Banner` })}
+                    className="p-3.5 rounded-xl ring-1 ring-ink-100 bg-ink-50/50 hover:bg-ink-50 cursor-pointer transition-all group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold uppercase text-navy-800">Store Banner</span>
+                      <Eye size={13} className="text-ink-400 group-hover:text-navy-700 transition-colors" />
+                    </div>
+                    <div className="w-full h-28 rounded-lg bg-white ring-1 ring-ink-100 overflow-hidden flex items-center justify-center">
+                      {isWebUrl(b.banner) ? (
+                        <img src={b.banner} alt="Banner" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                      ) : (
+                        <div className="p-2 text-center">
+                          <Smartphone size={22} className="text-navy-700 mx-auto mb-1" />
+                          <p className="text-[11px] font-medium text-navy-900 truncate max-w-[140px]">{getFileName(b.banner)}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Store Gallery Photos */}
+                {(b.businessPhotos || []).length > 0 && (
+                  <div className="p-3.5 rounded-xl ring-1 ring-ink-100 bg-ink-50/50 flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[11px] font-bold uppercase text-navy-800">
+                        Store Photos ({(b.businessPhotos || []).length})
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(b.businessPhotos || []).slice(0, 2).map((photoUrl, i) => (
+                        <div
+                          key={i}
+                          onClick={() => setLightbox({ open: true, url: photoUrl, label: `${b.businessName} - Store Photo ${i + 1}` })}
+                          className="relative group cursor-pointer h-24 rounded-lg bg-white ring-1 ring-ink-100 overflow-hidden flex items-center justify-center"
+                        >
+                          {isWebUrl(photoUrl) ? (
+                            <img src={photoUrl} alt="Store" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                          ) : (
+                            <div className="p-1 text-center">
+                              <Smartphone size={16} className="text-navy-700 mx-auto" />
+                              <span className="text-[9px] font-medium text-navy-900 truncate block max-w-[70px]">{getFileName(photoUrl)}</span>
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
+                            <Eye size={14} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+
           {!b.logo && !b.banner && !(b.businessPhotos || []).length && (
             <div className="flex items-center gap-2 text-ink-400 text-sm mt-4">
               <ImageIcon size={15} />
@@ -733,41 +1026,80 @@ export default function PartnerDetail() {
             )
           }
         >
+          {/* Cancelled Cheque / Bank Passbook Preview Card */}
+          {bank.cancelledChequeUrl && (
+            <div className="mb-5 p-4 rounded-xl bg-ink-50/70 ring-1 ring-ink-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div
+                  onClick={() => setLightbox({ open: true, url: bank.cancelledChequeUrl, label: 'Cancelled Cheque / Bank Passbook' })}
+                  className="relative group cursor-pointer w-24 h-16 rounded-xl bg-white ring-1 ring-ink-200 overflow-hidden flex items-center justify-center shrink-0"
+                >
+                  {isWebUrl(bank.cancelledChequeUrl) ? (
+                    <img src={bank.cancelledChequeUrl} alt="Cancelled Cheque" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                  ) : (
+                    <div className="p-1 text-center">
+                      <Smartphone size={18} className="text-navy-700 mx-auto" />
+                      <span className="text-[9px] font-bold text-navy-600">Cheque</span>
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
+                    <Eye size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-navy-900">Cancelled Cheque / Passbook</p>
+                    <span className="text-[10px] font-semibold bg-navy-50 text-navy-700 px-2 py-0.5 rounded-full ring-1 ring-navy-100">
+                      Bank Document
+                    </span>
+                  </div>
+                  <p className="text-xs text-ink-500 mt-0.5">Uploaded proof for bank account verification</p>
+                  <button
+                    onClick={() => setLightbox({ open: true, url: bank.cancelledChequeUrl, label: 'Cancelled Cheque / Bank Passbook' })}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-navy-700 hover:text-gold-600 mt-1 transition-colors"
+                  >
+                    <Eye size={12} /> Enlarge Cheque Document
+                  </button>
+                </div>
+              </div>
+
+              {bank.verified ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success-700 bg-success-100 px-3.5 py-1.5 rounded-full shrink-0">
+                  <CheckCircle2 size={14} /> Bank Verified
+                </span>
+              ) : (
+                <button
+                  onClick={handleVerifyBank}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-navy-800 hover:bg-navy-700 px-4 py-2 rounded-xl transition-colors shrink-0"
+                >
+                  <ShieldCheck size={14} /> Mark Bank Verified
+                </button>
+              )}
+            </div>
+          )}
+
           <InfoGrid>
             <InfoItem label="Account Holder Name" value={bank.accountHolderName} />
             <InfoItem label="Bank Name" value={bank.bankName} />
             <InfoItem label="Account Number" value={bank.accountNumber} />
             <InfoItem label="IFSC Code" value={bank.ifscCode} />
-            <InfoItem label="UPI ID" value={bank.upiId} />
-            <InfoItem
-              label="Cancelled Cheque"
-              value={
-                bank.cancelledChequeUrl ? (
-                  <a
-                    href={bank.cancelledChequeUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-navy-700"
-                  >
-                    View Document <ExternalLink size={12} />
-                  </a>
-                ) : (
-                  '—'
-                )
-              }
-            />
+            <InfoItem label="Branch" value={bank.branch || '—'} />
+            <InfoItem label="UPI ID" value={bank.upiId || '—'} />
           </InfoGrid>
-          <div className="mt-4">
-            {bank.verified ? (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success-600 bg-success-50 px-3 py-1.5 rounded-full">
-                <CheckCircle2 size={13} /> Bank details verified
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-warning-600 bg-warning-50 px-3 py-1.5 rounded-full">
-                Awaiting verification
-              </span>
-            )}
-          </div>
+
+          {!bank.cancelledChequeUrl && (
+            <div className="mt-4">
+              {bank.verified ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-success-600 bg-success-50 px-3 py-1.5 rounded-full">
+                  <CheckCircle2 size={13} /> Bank details verified
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-warning-600 bg-warning-50 px-3 py-1.5 rounded-full">
+                  Awaiting verification
+                </span>
+              )}
+            </div>
+          )}
         </SectionCard>
 
         {/* ── 07 Delivery Settings ──────────────────────────────────── */}
@@ -1147,6 +1479,140 @@ export default function PartnerDetail() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── All Uploaded Media & Documents Gallery Modal ─────────────── */}
+      <AnimatePresence>
+        {mediaModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy-950/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.94, opacity: 0, y: 16 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.94, opacity: 0, y: 16 }}
+              className="bg-white rounded-2xl ring-1 ring-ink-100 shadow-2xl max-w-4xl w-full max-h-[88vh] flex flex-col overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="p-5 border-b border-ink-100 flex items-center justify-between bg-navy-900 text-white shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-white/10 text-gold-300">
+                    <ImageIcon size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-lg text-white">
+                      All Uploaded Media &amp; Documents
+                    </h3>
+                    <p className="text-xs text-ink-300">
+                      {b.businessName} · {allMediaList.length} total files registered
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setMediaModalOpen(false)}
+                  className="p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Modal Body: Grid of all media */}
+              <div className="p-6 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {allMediaList.map((item, idx) => {
+                  const isWeb = isWebUrl(item.url);
+                  return (
+                    <div
+                      key={idx}
+                      className="rounded-xl ring-1 ring-ink-100 bg-white p-3.5 flex flex-col justify-between hover:shadow-card transition-all"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-2.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-navy-50 text-navy-700 px-2 py-0.5 rounded-full">
+                            {item.category}
+                          </span>
+                          {item.status === 'approved' && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-success-700 bg-success-50 px-2 py-0.5 rounded-full">
+                              <CheckCircle2 size={10} /> Approved
+                            </span>
+                          )}
+                          {item.status === 'rejected' && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-danger-700 bg-danger-50 px-2 py-0.5 rounded-full">
+                              <XCircle size={10} /> Rejected
+                            </span>
+                          )}
+                          {item.verified && (
+                            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-success-700 bg-success-50 px-2 py-0.5 rounded-full">
+                              <CheckCircle2 size={10} /> Bank Verified
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-sm font-semibold text-navy-900 mb-0.5">{item.label}</p>
+                        {item.number && (
+                          <p className="text-xs text-ink-500 font-mono mb-2 truncate">
+                            {item.number}
+                          </p>
+                        )}
+
+                        {/* Thumbnail */}
+                        <div
+                          onClick={() => {
+                            setLightbox({ open: true, url: item.url, label: item.label });
+                          }}
+                          className="relative group cursor-pointer w-full h-32 rounded-lg bg-ink-50 ring-1 ring-ink-100 overflow-hidden flex items-center justify-center my-2"
+                        >
+                          {isWeb ? (
+                            <img
+                              src={item.url}
+                              alt={item.label}
+                              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
+                            />
+                          ) : (
+                            <div className="p-3 text-center">
+                              <Smartphone size={24} className="text-navy-600 mx-auto mb-1" />
+                              <p className="text-[11px] font-medium text-navy-900 truncate max-w-[180px]">
+                                {getFileName(item.url)}
+                              </p>
+                              <p className="text-[9px] text-ink-400">Mobile Cache Path</p>
+                            </div>
+                          )}
+                          <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
+                            <Eye size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-ink-50 flex items-center justify-between">
+                        <button
+                          onClick={() => setLightbox({ open: true, url: item.url, label: item.label })}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-navy-700 hover:text-gold-600 transition-colors"
+                        >
+                          <Eye size={12} /> Full Preview
+                        </button>
+                        {item.type && item.type in (DOC_SETS[businessType]?.reduce((acc, d) => ({ ...acc, [d.key]: true }), {}) || {}) && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleDocStatus(item.type, 'approved')}
+                              title="Approve document"
+                              className="p-1 rounded bg-success-50 text-success-600 hover:bg-success-100 transition-colors"
+                            >
+                              <Check size={12} />
+                            </button>
+                            <button
+                              onClick={() => handleDocStatus(item.type, 'rejected')}
+                              title="Reject document"
+                              className="p-1 rounded bg-danger-50 text-danger-600 hover:bg-danger-100 transition-colors"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </motion.div>
           </div>
         )}

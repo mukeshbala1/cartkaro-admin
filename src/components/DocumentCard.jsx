@@ -1,16 +1,29 @@
 // src/components/DocumentCard.jsx
 import { useState } from 'react';
-import { FileText, ExternalLink, Check, X, Eye, CheckCircle2, XCircle } from 'lucide-react';
+import { FileText, ExternalLink, Check, X, Eye, CheckCircle2, XCircle, Smartphone } from 'lucide-react';
 import ImageLightbox from './ImageLightbox';
+
+function isWebUrl(url) {
+  if (!url) return false;
+  return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:');
+}
 
 function isImageUrl(url) {
   if (!url) return false;
   return /\.(jpg|jpeg|png|gif|webp|svg)/i.test(url.split('?')[0]);
 }
 
+function getFileName(url) {
+  if (!url) return '';
+  const parts = url.split('/');
+  return parts[parts.length - 1] || url;
+}
+
 export default function DocumentCard({ label, number, url, status, onApprove, onReject }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const isImg = isImageUrl(url);
+  const isWeb = isWebUrl(url);
 
   return (
     <>
@@ -53,8 +66,8 @@ export default function DocumentCard({ label, number, url, status, onApprove, on
           )}
         </div>
 
-        {/* Image thumbnail */}
-        {url && isImg && (
+        {/* Image thumbnail / File indicator */}
+        {url && isImg && isWeb && !imgError && (
           <div
             className="relative group cursor-pointer rounded-lg overflow-hidden ring-1 ring-ink-100"
             onClick={() => setLightboxOpen(true)}
@@ -62,6 +75,7 @@ export default function DocumentCard({ label, number, url, status, onApprove, on
             <img
               src={url}
               alt={label}
+              onError={() => setImgError(true)}
               className="w-full h-28 object-cover transition-transform duration-200 group-hover:scale-105"
             />
             <div className="absolute inset-0 bg-navy-950/0 group-hover:bg-navy-950/40 transition-colors flex items-center justify-center">
@@ -73,17 +87,27 @@ export default function DocumentCard({ label, number, url, status, onApprove, on
           </div>
         )}
 
+        {url && (!isWeb || imgError) && (
+          <div className="bg-ink-50 rounded-lg p-2.5 ring-1 ring-ink-100 flex items-center gap-2 text-xs text-ink-600">
+            <Smartphone size={14} className="text-navy-600 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-navy-900 truncate">{getFileName(url)}</p>
+              <p className="text-[10px] text-ink-400">Uploaded via Partner Mobile App</p>
+            </div>
+          </div>
+        )}
+
         {/* Footer actions */}
         <div className="flex items-center justify-between gap-2">
           {url ? (
-            isImg ? (
+            isWeb && isImg && !imgError ? (
               <button
                 onClick={() => setLightboxOpen(true)}
                 className="inline-flex items-center gap-1 text-xs font-semibold text-navy-700 hover:text-gold-600 transition-colors"
               >
                 <Eye size={12} /> Preview
               </button>
-            ) : (
+            ) : isWeb ? (
               <a
                 href={url}
                 target="_blank"
@@ -92,6 +116,10 @@ export default function DocumentCard({ label, number, url, status, onApprove, on
               >
                 View Document <ExternalLink size={12} />
               </a>
+            ) : (
+              <span className="text-[11px] text-ink-500 font-medium truncate max-w-[160px]" title={url}>
+                {getFileName(url)}
+              </span>
             )
           ) : (
             <span className="text-xs text-ink-400">No file uploaded</span>
@@ -143,12 +171,14 @@ export default function DocumentCard({ label, number, url, status, onApprove, on
         </div>
       </div>
 
-      <ImageLightbox
-        open={lightboxOpen}
-        url={url}
-        label={label}
-        onClose={() => setLightboxOpen(false)}
-      />
+      {isWeb && (
+        <ImageLightbox
+          open={lightboxOpen}
+          url={url}
+          label={label}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
     </>
   );
 }
